@@ -1,0 +1,111 @@
+---
+- name: Install sonarqube software
+  hosts: localhost 
+  gather_facts: true
+  become: yes
+  become_method: sudo
+  tags: [sonarqube]
+
+  tasks:
+   - name: Update the software package repository
+     yum: 
+      name: '*' 
+      update_cache: yes
+ 
+   - name: Install dependencies
+     yum: 
+      name: "{{ item }}" 
+      state: latest
+     with_items:
+      - java-1.8.0-openjdk
+      - git
+      - unzip
+      - wget
+
+   - name: backup profile 
+     command: sudo cp /etc/profile /etc/profile_orig
+         
+   - name: set java home
+     shell: sudo echo -e "export JAVA_HOME=/usr/lib/jvm/jre-1.8.0-openjdk" >> /etc/profile
+
+   - name: set jre home
+     shell: sudo echo -e "export JRE_HOME=/usr/lib/jvm/jre" >> /etc/profile
+   
+   - name: reload profile
+     shell: source /etc/profile
+   
+   - name: add mysql repo
+     get_url: 
+      url: http://repo.mysql.com/mysql-community-release-el7-5.noarch.rpm
+      dest: /tmp
+
+   - name: install repo
+     shell: /bin/rpm -Uvh /tmp/mysql-community-release-el7-5.noarch.rpm
+
+   - name: install mysql
+     yum: name={{item}} state=present
+     with_items:
+      - mysql
+      - mysql-server
+
+   - name: run MySQL
+     service: name=mysqld state=started enabled=yes
+
+   - name: install required python MySQLdb lib to create databases and users
+     yum: name={{item}} state=present
+     with_items:
+      - gcc-c++
+      - MySQL-python
+
+   - name: create mysql database
+     mysql_db: name=sonarqube_db state=present
+
+   - name: create db user
+     mysql_user: name=sonarqubeuser password=password@123 priv='sonarqube_db.*:ALL' host=localhost state=present
+
+   - name: Create a user for sonarqube
+     user:
+      name: sonarqube
+
+   - name: download sonarqube
+     get_url: 
+      url: https://sonarsource.bintray.com/Distribution/sonarqube/sonarqube-6.7.5.zip
+      dest: /opt
+
+   - name: unzip sonarqube
+     unarchive:
+      src: /opt/sonarqube-6.7.5.zip
+      dest: /opt
+
+   - name: remove sonarqube-6.7.5.zip
+     file:
+      path: /opt/sonarqube-6.7.5.zip
+      state: absent
+
+   - name: rename sonarqube dir
+     shell: mv /opt/sonarqube-6.7.5 /opt/sonarqube
+
+   - name: set ownership for sonarqube
+     file:
+      path: /opt/sonarqube
+      owner: sonarqube
+      group: sonarqube
+      recurse: yes
+
+   - name: insert sonar.jdbc.username 
+     blockinfile:
+      path: /opt/sonarqube/conf/sonar.properties
+      insertafter: "#sonar.jdbc.username="
+      content: |
+       sonar.jdbc.username=sonarqube_user
+       sonar.jdbc.password=password@123
+       sonar.jdbc.url=jdbc:mysql://localhost:3306/sonarqube_db?useUnicode=true&characterEncoding=utf8&rewriteBatchedStatements=true&useConfigs=maxPerformance
+
+   - name: edit sonar.sh
+     lineinfile:
+      dest: /opt/sonarqube/bin/linux-x86-64/sonar.sh
+      insertafter: '#RUN_AS_USER='
+      line: 'RUN_AS_USER=sonarqube'
+
+   - name: start sonarqube
+     shell: /opt/sonarqube/bin/linux-x86-64/sonar.sh start
